@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG 03 — Hybrid Search & Reranking</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-card: #0d1117;
+            --bg-code: #161b22;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent: #76B900;
+            --accent-dim: #76B90044;
+            --accent-glow: #76B90033;
+            --border: #21262d;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+            --font-body: 'Inter', sans-serif;
+            --max-width: 900px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            font-size: 17px;
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            position: relative;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        .hero > * { position: relative; z-index: 1; }
+        .series-label {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+        .hero h1 {
+            font-family: var(--font-display);
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+            margin-bottom: 1rem;
+        }
+        .hero h1 .accent { color: var(--accent); }
+        .hero .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 640px;
+            margin-bottom: 2rem;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-bottom: 2.5rem;
+        }
+        .tag {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+            white-space: nowrap;
+        }
+        .pipeline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            max-width: var(--max-width);
+        }
+        .pipeline-step {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            padding: 0.3rem 0.7rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .pipeline-arrow { color: var(--accent); font-size: 0.9rem; font-weight: 700; }
+        .slide {
+            min-height: 100vh;
+            max-width: var(--max-width);
+            margin: 0 auto;
+            padding: 4rem 1.5rem;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .slide-number {
+            font-family: var(--font-display);
+            font-size: 5rem;
+            font-weight: 700;
+            color: var(--accent-dim);
+            position: absolute;
+            top: 2rem;
+            right: 1.5rem;
+            line-height: 1;
+            user-select: none;
+        }
+        .slide h2 {
+            font-family: var(--font-display);
+            font-size: 1.9rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 1.5rem;
+            line-height: 1.25;
+        }
+        .slide h3 {
+            font-family: var(--font-display);
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .slide p { margin-bottom: 1rem; color: var(--text-secondary); }
+        .slide p strong { color: var(--text-primary); }
+        .slide ul, .slide ol { margin-bottom: 1rem; padding-left: 1.5rem; color: var(--text-secondary); }
+        .slide li { margin-bottom: 0.4rem; }
+        .slide li strong { color: var(--text-primary); }
+        .slide code {
+            font-family: var(--font-mono);
+            font-size: 0.88em;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            padding: 0.05rem 0.35rem;
+            border-radius: 3px;
+            color: #c9d1d9;
+        }
+        .code-block {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin: 1.25rem 0;
+            overflow: hidden;
+        }
+        .code-header {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            background: rgba(118, 185, 0, 0.08);
+            padding: 0.4rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .code-block pre { margin: 0; padding: 1rem; overflow-x: auto; }
+        .code-block code {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #c9d1d9;
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+        .kw { color: #ff7b72; }
+        .fn { color: #d2a8ff; }
+        .str { color: #a5d6ff; }
+        .cm { color: #8b949e; font-style: italic; }
+        .num { color: #79c0ff; }
+        .type { color: #ffa657; }
+        .dir { color: #ff7b72; }
+        .mac { color: #ffa657; }
+        .table-wrap {
+            overflow-x: auto;
+            margin: 1.25rem 0;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th {
+            background: var(--bg-code);
+            color: var(--accent);
+            font-weight: 600;
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-family: var(--font-display);
+            white-space: nowrap;
+        }
+        td {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:nth-child(even) td { background: rgba(13, 17, 23, 0.5); }
+        .diagram-flow {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-box {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            text-align: center;
+            white-space: nowrap;
+        }
+        .diagram-box.accent { border-color: var(--accent); color: var(--accent); background: rgba(118, 185, 0, 0.08); }
+        .diagram-box.dim { color: var(--text-secondary); border-color: var(--border); }
+        .diagram-arrow { color: var(--accent); font-size: 1.3rem; font-weight: 700; }
+        .diagram-vertical {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.3rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-vertical .diagram-arrow { font-size: 1.1rem; }
+        .hierarchy {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .hierarchy-level { display: flex; align-items: center; gap: 0.75rem; }
+        .hierarchy-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            min-width: 80px;
+            text-align: right;
+        }
+        .hierarchy-items { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+        .hierarchy-item {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .hierarchy-item.accent { border-color: var(--accent); color: var(--accent); background: rgba(118, 185, 0, 0.08); }
+        .diagram-grid {
+            display: grid;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+        .diagram-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .diagram-panel {
+            padding: 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .diagram-panel.accent-border { border-left: 3px solid var(--accent); }
+        .diagram-panel h4 {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        .diagram-panel p, .diagram-panel ul { font-size: 0.85rem; }
+        .callout {
+            background: var(--bg-card);
+            border-left: 3px solid var(--accent);
+            border-radius: 0 8px 8px 0;
+            padding: 1rem 1.25rem;
+            margin: 1.25rem 0;
+        }
+        .callout p { margin-bottom: 0; }
+        .callout p + p { margin-top: 0.5rem; }
+        .callout .callout-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.3rem;
+        }
+        .contents-list { list-style: none; padding-left: 0; counter-reset: contents; }
+        .contents-list li {
+            counter-increment: contents;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .contents-list li:last-child { border-bottom: none; }
+        .contents-list li::before {
+            content: counter(contents, decimal-leading-zero);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            min-width: 2rem;
+        }
+        .contents-list a { color: var(--text-primary); text-decoration: none; transition: color 0.2s; }
+        .contents-list a:hover { color: var(--accent); }
+        .footer {
+            text-align: center;
+            padding: 3rem 1.5rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            max-width: var(--max-width);
+            margin: 0 auto;
+        }
+        .footer a { color: var(--accent); text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+        .canvas-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1.25rem 0;
+            overflow-x: auto;
+        }
+        .canvas-wrap canvas, .canvas-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+        .badge {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            vertical-align: middle;
+            margin-left: 0.3rem;
+        }
+        .badge.ok    { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .badge.warn  { border-color: #ffa657; color: #ffa657; background: rgba(255,166,87,0.08); }
+        .badge.bad   { border-color: #ff7b72; color: #ff7b72; background: rgba(255,123,114,0.08); }
+        @media (max-width: 640px) {
+            .slide { padding: 3rem 1rem; min-height: auto; }
+            .slide-number { font-size: 3rem; top: 1.5rem; right: 1rem; }
+            .slide h2 { font-size: 1.5rem; }
+            .diagram-grid.cols-2, .diagram-grid.cols-3 { grid-template-columns: 1fr; }
+            .pipeline { gap: 0.15rem; }
+            .pipeline-step { font-size: 0.6rem; padding: 0.2rem 0.4rem; }
+            .hero h1 { font-size: 1.8rem; }
+            table { font-size: 0.78rem; }
+        }
+    </style>
+</head>
+<body>
+<header class="hero">
+    <div class="series-label">RAG &amp; Retrieval Systems Series &mdash; Presentation 03</div>
+    <h1>Hybrid Search &amp; <span class="accent">Reranking</span></h1>
+    <p class="subtitle">BM25 + dense + RRF, cross-encoder rerankers, ColBERT-as-reranker, multi-stage cascades, and latency budgets under 500 ms.</p>
+    <div class="tags">
+        <span class="tag">BM25</span>
+        <span class="tag">RRF Fusion</span>
+        <span class="tag">BGE-Reranker</span>
+        <span class="tag">Cohere Rerank</span>
+        <span class="tag">ColBERT PLAID</span>
+        <span class="tag">NDCG</span>
+        <span class="tag">Multi-Stage</span>
+    </div>
+    <div class="pipeline">
+        <span class="pipeline-step">BM25</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Dense ANN</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">RRF Fusion</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Top-100</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Cross-Encoder</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Top-10</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">LLM Context</span>
+    </div>
+</header>
+
+<section class="slide" id="slide-00">
+    <div class="slide-number">00</div>
+    <h2>Topics We'll Cover</h2>
+    <ul class="contents-list">
+        <li><a href="#slide-01">Why Dense Alone Falls Short</a></li>
+        <li><a href="#slide-02">BM25 &mdash; Mechanics, IDF, Length Normalisation</a></li>
+        <li><a href="#slide-03">Hybrid Fusion &mdash; RRF, Score Normalisation, Weighted Sum</a></li>
+        <li><a href="#slide-04">Cross-Encoder Rerankers &mdash; BGE-Reranker, Cohere Rerank, mxbai</a></li>
+        <li><a href="#slide-05">ColBERT as a Reranker &mdash; PLAID and Late Interaction at Scale</a></li>
+        <li><a href="#slide-06">Multi-Stage Cascades &mdash; Recall vs Precision Per Stage</a></li>
+        <li><a href="#slide-07">Latency Budgets &mdash; Where Reranking Fits in &lt; 500 ms</a></li>
+        <li><a href="#slide-08">Eval &mdash; Recall@k, MRR, NDCG, Manual Review</a></li>
+        <li><a href="#slide-09">What to Take Away</a></li>
+    </ul>
+</section>
+
+<section class="slide" id="slide-01">
+    <div class="slide-number">01</div>
+    <h2>Why Dense Alone Falls Short</h2>
+    <p>Dense retrieval encodes global semantics but loses <strong>lexical specificity</strong>. A query for <em>"CVE-2024-1234"</em> or <em>"errno ENOSPC"</em> or a product SKU will fail completely against a dense index if those exact strings were not seen in the training distribution &mdash; the model has no way to generalise a random identifier it has never encountered.</p>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>Where dense fails</h4>
+            <ul>
+                <li>Rare named entities (CVE IDs, part numbers, chemical formulae)</li>
+                <li>Exact keyword search (&ldquo;the exact phrase&rdquo; contract language)</li>
+                <li>New vocabulary added after training cutoff</li>
+                <li>Code identifiers (<code>NullPointerException</code>, API endpoint paths)</li>
+                <li>Highly technical jargon in specialised domains</li>
+            </ul>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Where BM25 fails</h4>
+            <ul>
+                <li>Paraphrase and synonym queries (&ldquo;car&rdquo; vs &ldquo;automobile&rdquo;)</li>
+                <li>Multilingual queries over an English corpus</li>
+                <li>Long-context semantic matching</li>
+                <li>Abstractive questions (&ldquo;What causes X?&rdquo;)</li>
+                <li>Queries shorter than 3&ndash;4 words with common terms</li>
+            </ul>
+        </div>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Empirical evidence</div>
+        <p>On the BEIR benchmark, BM25 achieves NDCG@10 of 31.7 averaged across 18 datasets. Top dense bi-encoders (BGE-M3, E5-mistral) achieve ~44&ndash;48. But on the <em>Signal-1M</em> (news tweet retrieval), <em>FEVER</em> (fact verification), and <em>DBPedia</em> tasks, BM25 still beats many bi-encoders. Hybrid consistently achieves 48&ndash;52 &mdash; a 5&ndash;10% relative gain over either alone.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-02">
+    <div class="slide-number">02</div>
+    <h2>BM25 &mdash; Mechanics, IDF, Length Normalisation</h2>
+    <p>BM25 (Best Match 25, Robertson &amp; Walker 1994) is still the default sparse baseline in 2025. Understanding its parameters prevents misuse.</p>
+    <div class="callout">
+        <div class="callout-label">BM25 scoring formula</div>
+        <p>For query Q with terms q&#x1D456; and document D:</p>
+        <p><strong>score(Q,D) = &sum; IDF(q&#x1D456;) &times; [tf(q&#x1D456;,D) &times; (k&#x2081;+1)] / [tf(q&#x1D456;,D) + k&#x2081; &times; (1 &minus; b + b &times; |D|/avgdl)]</strong></p>
+        <p>where tf is term frequency in D, |D| is document length in tokens, avgdl is average document length, k&#x2081; controls term-frequency saturation (typical: 1.2&ndash;2.0), and b controls length normalisation (typical: 0.75).</p>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Parameter</th><th>Effect of increasing</th><th>Production default</th></tr></thead>
+            <tbody>
+                <tr><td><code>k1</code></td><td>Higher k1 &rarr; less saturation &rarr; frequent terms get more weight. For technical corpora with rare keywords, lower k1 (1.0&ndash;1.5) is better.</td><td>1.2</td></tr>
+                <tr><td><code>b</code></td><td>b=1.0: full length normalisation. b=0: no normalisation. For short documents (FAQ, product titles), lower b (0.5) avoids penalising dense long docs.</td><td>0.75</td></tr>
+                <tr><td>IDF floor</td><td>Standard IDF can go negative for very common terms. Elasticsearch uses a floor at 0. Lucene 9+ uses a smoothed IDF.</td><td>log(1 + (N&minus;df+0.5)/(df+0.5))</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="diagram-flow">
+        <div class="diagram-box accent">Tokenise</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box">Lowercase + Stem/Lemmatise</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box">Remove stopwords</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box accent">Build inverted index</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box">BM25 score per doc</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box accent">Rank list</div>
+    </div>
+</section>
+
+<section class="slide" id="slide-03">
+    <div class="slide-number">03</div>
+    <h2>Hybrid Fusion &mdash; RRF, Score Normalisation, Weighted Sum</h2>
+    <p>Once you have two (or more) ranked lists &mdash; one from BM25, one from dense &mdash; you need a fusion strategy. The three main approaches differ in robustness and tunability.</p>
+    <div class="diagram-grid cols-3">
+        <div class="diagram-panel accent-border">
+            <h4>Reciprocal Rank Fusion (RRF)</h4>
+            <p>Score = &sum; 1/(k + rank&#x1D456;) where k=60 is the smoothing constant. No score calibration needed &mdash; only rank positions. Extremely robust to score-scale differences between retrievers. Default choice for most hybrid RAG systems. Implemented natively in Elasticsearch 8.9+ and Qdrant 1.7+.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Score normalisation + weighted sum</h4>
+            <p>Normalise each retriever's scores to [0,1] (min-max or softmax), then combine: &alpha; &times; dense_score + (1&minus;&alpha;) &times; sparse_score. Allows tuning the weight &alpha; for your domain &mdash; technical corpora often need &alpha;=0.3 (more BM25 weight). Sensitive to score distribution shifts between queries.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Learned fusion</h4>
+            <p>Train a small MLP or LambdaMART model to weight the retrievers based on query features. Used in Bing, Google, and enterprise search systems. Requires labelled query&ndash;document pairs. Rarely justified for a single-domain RAG system &mdash; RRF is within 1&ndash;2 NDCG points of a tuned learned fusion at zero training cost.</p>
+        </div>
+    </div>
+    <div class="code-block">
+        <div class="code-header">RRF fusion in Python (retriever results as lists of doc IDs)</div>
+<pre><code><span class="kw">from</span> collections <span class="kw">import</span> defaultdict
+<span class="kw">from</span> typing <span class="kw">import</span> <span class="type">List</span>, <span class="type">Dict</span>
+
+<span class="kw">def</span> <span class="fn">rrf_fusion</span>(
+    ranked_lists: <span class="type">List</span>[<span class="type">List</span>[<span class="type">str</span>]],
+    k: <span class="type">int</span> = <span class="num">60</span>,
+) -> <span class="type">Dict</span>[<span class="type">str</span>, <span class="type">float</span>]:
+    scores: <span class="type">Dict</span>[<span class="type">str</span>, <span class="type">float</span>] = defaultdict(<span class="type">float</span>)
+    <span class="kw">for</span> ranked <span class="kw">in</span> ranked_lists:
+        <span class="kw">for</span> rank, doc_id <span class="kw">in</span> <span class="fn">enumerate</span>(ranked, start=<span class="num">1</span>):
+            scores[doc_id] += <span class="num">1.0</span> / (k + rank)
+    <span class="kw">return</span> <span class="fn">dict</span>(<span class="fn">sorted</span>(scores.items(), key=<span class="kw">lambda</span> x: x[<span class="num">1</span>], reverse=<span class="kw">True</span>))</code></pre>
+    </div>
+</section>
+
+<section class="slide" id="slide-04">
+    <div class="slide-number">04</div>
+    <h2>Cross-Encoder Rerankers &mdash; BGE-Reranker, Cohere Rerank, mxbai</h2>
+    <p>Cross-encoders achieve higher relevance precision than any bi-encoder because the query and document tokens attend to each other inside the encoder. The cost is O(k) forward passes per query where k is the candidate set size.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Model</th><th>Params</th><th>Latency (k=100, A100)</th><th>BEIR avg NDCG@10</th><th>Notes</th></tr></thead>
+            <tbody>
+                <tr><td><strong>BGE-reranker-v2-m3</strong></td><td>568 M</td><td>~150 ms</td><td>~57</td><td>Best open-weights; multilingual; pair with BGE-M3 bi-encoder</td></tr>
+                <tr><td><strong>BGE-reranker-large</strong></td><td>335 M</td><td>~80 ms</td><td>~55</td><td>English-only; lower latency than v2-m3</td></tr>
+                <tr><td><strong>Cohere Rerank 3.5</strong></td><td>&mdash;</td><td>API ~200 ms</td><td>~60</td><td>Best precision on proprietary benchmarks; &gt;100 languages; $0.002/1k chunks</td></tr>
+                <tr><td><strong>mxbai-rerank-large-v1</strong></td><td>435 M</td><td>~110 ms</td><td>~56</td><td>Open weights (Apache 2.0); competitive with BGE-reranker-large</td></tr>
+                <tr><td><strong>ms-marco-MiniLM-L-6-v2</strong></td><td>22 M</td><td>~15 ms</td><td>~48</td><td>Extremely fast; good for low-latency pipelines; quality trade-off</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="code-block">
+        <div class="code-header">BGE-reranker-v2-m3 via sentence-transformers CrossEncoder</div>
+<pre><code><span class="kw">from</span> sentence_transformers <span class="kw">import</span> CrossEncoder
+
+reranker = <span class="fn">CrossEncoder</span>(
+    <span class="str">"BAAI/bge-reranker-v2-m3"</span>,
+    max_length=<span class="num">512</span>,
+    device=<span class="str">"cuda"</span>,
+)
+
+pairs = [(query, doc) <span class="kw">for</span> doc <span class="kw">in</span> candidate_docs]
+scores = reranker.<span class="fn">predict</span>(pairs, batch_size=<span class="num">64</span>)
+
+reranked = <span class="fn">sorted</span>(
+    <span class="fn">zip</span>(candidate_docs, scores),
+    key=<span class="kw">lambda</span> x: x[<span class="num">1</span>],
+    reverse=<span class="kw">True</span>,
+)[:top_k]</code></pre>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Truncation is a silent quality killer</div>
+        <p>Cross-encoders have a token budget (typically 512 tokens for BERT-based models). If query + document exceeds this, the document is truncated. For long passages (&gt;300 tokens), use a <strong>chunk-and-max</strong> strategy: split the document into overlapping windows, score each window independently, take the max score. This adds latency but recovers 3&ndash;5 NDCG points on long-document corpora.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-05">
+    <div class="slide-number">05</div>
+    <h2>ColBERT as a Reranker &mdash; PLAID and Late Interaction at Scale</h2>
+    <p>ColBERT (covered in Deck 01) can serve dual purpose: as the first-stage retriever (requires token-level index) or as a <strong>late-interaction reranker</strong> over a short-list of bi-encoder candidates. Used as a reranker, it has cross-encoder-level quality with 3&ndash;5&times; lower latency for k=100.</p>
+    <div class="diagram-flow">
+        <div class="diagram-box">Bi-encoder<br>Top-1000</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box accent">ColBERT encode<br>all 1000 docs<br><small>(token vectors)</small></div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box accent">MaxSim<br>per query token<br><small>(batched on GPU)</small></div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box">Sum scores<br>&rarr; Top-20</div>
+    </div>
+    <p><strong>PLAID</strong> (Performance-optimised Late Interaction Driver) extends ColBERTv2 with centroid-based candidate pruning. For reranking over a pre-filtered short-list, you can skip the PLAID indexing step and run MaxSim directly on GPU in &lt;50 ms for k=200.</p>
+    <div class="code-block">
+        <div class="code-header">RAGatouille ColBERT reranker (pip install ragatouille)</div>
+<pre><code><span class="kw">from</span> ragatouille <span class="kw">import</span> RAGPretrainedModel
+
+reranker = RAGPretrainedModel.<span class="fn">from_pretrained</span>(<span class="str">"colbert-ir/colbertv2.0"</span>)
+
+<span class="cm"># Rerank a pre-retrieved list (query, list of passage strings)</span>
+results = reranker.<span class="fn">rerank</span>(
+    query=<span class="str">"transformer attention mechanism"</span>,
+    documents=candidate_passages,   <span class="cm"># list[str], len <= 1000</span>
+    k=<span class="num">10</span>,
+)
+<span class="cm"># Returns list of {"content": str, "score": float, "rank": int}</span></code></pre>
+    </div>
+    <div class="callout">
+        <div class="callout-label">When to choose ColBERT vs cross-encoder reranker</div>
+        <p>ColBERT reranker wins when: (1) candidate list is large (k&gt;200), (2) you have GPU available, (3) you need to stay open-source. Cross-encoder wins when: (1) you need the absolute best MRR on a small k (&le;50), (2) you can tolerate higher latency, (3) you want a managed API (Cohere). For most production pipelines: bi-encoder top-100 &rarr; ColBERT reranker top-20 &rarr; LLM with top-5 is a strong default cascade.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-06">
+    <div class="slide-number">06</div>
+    <h2>Multi-Stage Cascades &mdash; Recall vs Precision Per Stage</h2>
+    <p>Every stage in a retrieval cascade has a different objective. Confusing <em>recall</em> (don't miss relevant docs) at stage 1 with <em>precision</em> (don't include irrelevant docs) at stage 3 is the most common architectural mistake in RAG pipelines.</p>
+    <div class="hierarchy">
+        <div class="hierarchy-level">
+            <div class="hierarchy-label">Stage 1</div>
+            <div class="hierarchy-items">
+                <div class="hierarchy-item accent">BM25 (sparse)</div>
+                <div class="hierarchy-item accent">Dense ANN bi-encoder</div>
+                <div class="hierarchy-item">ColBERT full-index</div>
+                <div class="hierarchy-label" style="min-width:auto;text-align:left;margin-left:0.5rem;">&rarr; goal: Recall@1000 &gt; 95%</div>
+            </div>
+        </div>
+        <div class="hierarchy-level">
+            <div class="hierarchy-label">Fusion</div>
+            <div class="hierarchy-items">
+                <div class="hierarchy-item accent">RRF (k=60)</div>
+                <div class="hierarchy-item">Weighted sum</div>
+                <div class="hierarchy-label" style="min-width:auto;text-align:left;margin-left:0.5rem;">&rarr; Top-100 to reranker</div>
+            </div>
+        </div>
+        <div class="hierarchy-level">
+            <div class="hierarchy-label">Stage 2</div>
+            <div class="hierarchy-items">
+                <div class="hierarchy-item accent">Cross-encoder / ColBERT</div>
+                <div class="hierarchy-item">Cohere Rerank API</div>
+                <div class="hierarchy-label" style="min-width:auto;text-align:left;margin-left:0.5rem;">&rarr; Top-10 to LLM; goal: Precision@10 &gt; 80%</div>
+            </div>
+        </div>
+        <div class="hierarchy-level">
+            <div class="hierarchy-label">Stage 3</div>
+            <div class="hierarchy-items">
+                <div class="hierarchy-item accent">LLM relevance filter</div>
+                <div class="hierarchy-item">Contextual compression</div>
+                <div class="hierarchy-label" style="min-width:auto;text-align:left;margin-left:0.5rem;">&rarr; Top-5 into context window</div>
+            </div>
+        </div>
+    </div>
+    <div class="callout">
+        <div class="callout-label">The recall ceiling problem</div>
+        <p>If stage 1 misses a relevant document, no downstream stage can recover it. Therefore: <strong>optimise stage 1 for recall, not precision</strong>. A Recall@100 of 92% means 8% of user queries will have the answer in positions 101+ &mdash; invisible to the reranker. Monitor Recall@100 on a labelled evaluation set before tuning any downstream stage.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-07">
+    <div class="slide-number">07</div>
+    <h2>Latency Budgets &mdash; Where Reranking Fits in &lt; 500 ms</h2>
+    <p>A user-facing RAG endpoint must complete end-to-end in &lt;500 ms for interactive use. The retrieval pipeline typically needs to stay within 200 ms to leave budget for LLM generation.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Stage</th><th>Component</th><th>P50 latency</th><th>P99 latency</th><th>Optimisation lever</th></tr></thead>
+            <tbody>
+                <tr><td>Query encode</td><td>BGE-base bi-encoder, single query, GPU</td><td>~5 ms</td><td>~12 ms</td><td>Batch queries; use fp16 or int8</td></tr>
+                <tr><td>BM25 search</td><td>Elasticsearch / OpenSearch, 1 M docs</td><td>~15 ms</td><td>~40 ms</td><td>Tune shard count; avoid deep pagination</td></tr>
+                <tr><td>Dense ANN</td><td>Qdrant HNSW, 1 M docs, ef=80</td><td>~8 ms</td><td>~20 ms</td><td>Lower ef_search; binary quant with rescore</td></tr>
+                <tr><td>RRF fusion</td><td>Python, 2 lists of 100</td><td>&lt;1 ms</td><td>&lt;1 ms</td><td>No optimisation needed</td></tr>
+                <tr><td>Reranker</td><td>BGE-reranker-large, k=100, A100</td><td>~80 ms</td><td>~120 ms</td><td>Reduce k to 50; use MiniLM for &lt;20 ms</td></tr>
+                <tr><td>LLM generation</td><td>Claude Haiku / GPT-4o-mini, 5 docs</td><td>~300 ms</td><td>~900 ms</td><td>Reduce context; stream response</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Parallelise BM25 + dense retrieval</div>
+        <p>BM25 and dense ANN searches are independent &mdash; run them in parallel using <code>asyncio.gather</code> or a thread pool. This collapses two ~20 ms operations into one. Fusion then adds &lt;1 ms. Total stage-1 time: ~25 ms instead of ~40 ms. If you use Weaviate or Elasticsearch's built-in hybrid, the parallelism happens server-side automatically.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-08">
+    <div class="slide-number">08</div>
+    <h2>Eval &mdash; Recall@k, MRR, NDCG, Manual Review</h2>
+    <p>Retrieval evaluation is distinct from generation evaluation. You need a labelled test set with known relevant documents per query.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Metric</th><th>Formula</th><th>Interpretation</th><th>When to use</th></tr></thead>
+            <tbody>
+                <tr><td><strong>Recall@k</strong></td><td>|relevant &cap; top-k| / |relevant|</td><td>Fraction of relevant docs found in top k. Critical for stage-1 quality.</td><td>Always; k=100 for stage-1, k=10 for stage-2</td></tr>
+                <tr><td><strong>Precision@k</strong></td><td>|relevant &cap; top-k| / k</td><td>Fraction of top-k that are relevant. Tells you noise seen by the LLM.</td><td>Stage-2 and final context quality</td></tr>
+                <tr><td><strong>MRR@k</strong></td><td>(1/|Q|) &times; &sum; 1/rank&#x1D456;</td><td>Mean reciprocal rank of first relevant result. Sensitive to position 1 quality.</td><td>Single-answer factual RAG</td></tr>
+                <tr><td><strong>NDCG@k</strong></td><td>DCG@k / IDCG@k</td><td>Discounted cumulative gain; rewards relevant results at higher positions. Requires graded relevance.</td><td>Multi-document retrieval; BEIR standard</td></tr>
+                <tr><td><strong>Answer faithfulness</strong></td><td>LLM-as-judge</td><td>Does the generated answer cite the retrieved context? Requires generation eval (RAGAS/ARES).</td><td>End-to-end pipeline eval</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Building a labelled test set without annotation teams</div>
+        <p>Use <strong>LLM-generated queries</strong>: for each document chunk, prompt a model to generate 3&ndash;5 questions that the chunk answers. The (question, chunk) pair is a positive label. Negative labels: pick chunks with BM25 rank 10&ndash;30 for the same query (hard negatives). 500&ndash;1000 pairs is sufficient for reliable Recall@10 and NDCG@10 estimates. Validated against human-labelled subsets in BEIR, this approach yields within 2&ndash;3% of human label quality.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-09">
+    <div class="slide-number">09</div>
+    <h2>What to Take Away</h2>
+    <ul>
+        <li><strong>Dense retrieval alone fails on rare tokens and exact keywords.</strong> Always combine with BM25 unless your entire corpus is paraphrase-friendly prose.</li>
+        <li><strong>RRF with k=60</strong> is the default fusion strategy. It requires no score calibration and is within 1&ndash;2 NDCG of tuned weighted fusion.</li>
+        <li><strong>Cross-encoder rerankers</strong> (BGE-reranker-v2-m3, Cohere Rerank 3.5) add 5&ndash;10 NDCG points over bi-encoder-only retrieval at the cost of 80&ndash;200 ms extra latency for k=100.</li>
+        <li><strong>ColBERT reranker</strong> is the best latency-quality trade-off for k&gt;100 on GPU. RAGatouille wraps colbertv2.0 for drop-in use.</li>
+        <li><strong>Recall@100 at stage 1 is the ceiling.</strong> Measure it before tuning any downstream stage. A 90% ceiling means 10% of answers are permanently unreachable.</li>
+        <li><strong>Parallelise BM25 + dense ANN.</strong> They are independent operations; serial execution wastes 20&ndash;30 ms on every query.</li>
+        <li><strong>Cross-encoder truncation at 512 tokens</strong> silently degrades quality on long passages. Use chunk-and-max for documents &gt; 300 tokens.</li>
+    </ul>
+    <div class="callout">
+        <div class="callout-label">Where to next</div>
+        <p>Deck 04 covers the ingestion side: chunking strategies, layout-aware parsing with Unstructured / MinerU / LlamaParse / Docling, ColPali vision-based parsing, deduplication, and incremental ingestion pipeline design.</p>
+    </div>
+</section>
+
+<footer class="footer">
+    <p>Part of the <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_RAG_Retrieval">RAG &amp; Retrieval Systems Series</a></p>
+    <p style="margin-top:0.5rem;font-size:0.8rem;"><a href="https://github.com/BrendanJamesLynskey/LLM_Hub_RAG_Retrieval">Back to Series Index</a></p>
+</footer>
+<script>
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.style.opacity = '1';
+                entry.target.style.transform = 'translateY(0)';
+            }
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.slide').forEach(slide => {
+        slide.style.opacity = '0';
+        slide.style.transform = 'translateY(30px)';
+        slide.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        observer.observe(slide);
+    });
+</script>
+</body>
+</html>
